@@ -5,6 +5,9 @@
 GLOBAL_VAR_INIT(iris_token_cache_loaded, FALSE)
 GLOBAL_VAR_INIT(iris_token_cache, "")
 
+GLOBAL_VAR_INIT(iris_areas_index_round, null)
+GLOBAL_LIST_EMPTY(iris_areas_index_cache)
+
 /proc/iris_get_token()
 	if(!GLOB.iris_token_cache_loaded)
 		GLOB.iris_token_cache_loaded = TRUE
@@ -580,6 +583,13 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 
 /proc/iris_areas_index_endpoint(list/input)
 	var/lod = iris_lod(input)
+	var/force = input["force"]
+	var/round_key = text2num(GLOB.round_id) || 0
+	if(!force && GLOB.iris_areas_index_round == round_key && length(GLOB.iris_areas_index_cache))
+		var/list/cached = GLOB.iris_areas_index_cache.Copy()
+		cached["cached"] = TRUE
+		return iris_envelope("iris_areas_index", lod, cached)
+
 	var/started = world.time
 	var/list/result = list()
 
@@ -637,7 +647,11 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 			"adjacency" = adj_out,
 		))
 
-	return iris_envelope("iris_areas_index", lod, list(
+	var/list/payload = list(
 		"areas" = result,
 		"generated_in_ds" = world.time - started,
-	))
+	)
+	GLOB.iris_areas_index_round = round_key
+	GLOB.iris_areas_index_cache = payload.Copy()
+	payload["cached"] = FALSE
+	return iris_envelope("iris_areas_index", lod, payload)
