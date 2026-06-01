@@ -26,6 +26,8 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 		return iris_world_snapshot(input)
 	if("iris_players" in input)
 		return iris_players_endpoint(input)
+	if("iris_player" in input)
+		return iris_player_endpoint(input)
 
 	return json_encode(list("error" = "unknown_endpoint"))
 
@@ -217,3 +219,89 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 			continue
 		data += list(iris_mob_payload(C, lod))
 	return iris_envelope("iris_players", lod, data)
+
+/proc/iris_player_endpoint(list/input)
+	var/lod = iris_lod(input)
+	var/ckey_raw = input["ckey"]
+	if(!ckey_raw)
+		return iris_envelope("iris_player", lod, null, list("code" = "bad_request", "detail" = "missing ckey"))
+	var/needle = ckey(ckey_raw)
+	var/client/C = GLOB.directory[needle]
+	if(!C)
+		return iris_envelope("iris_player", lod, null, list("code" = "not_found", "ckey" = needle))
+
+	var/list/data = iris_mob_payload(C, lod)
+	var/mob/M = C.mob
+	var/turf/T = get_turf(M)
+
+	if(T)
+		// tile_under
+		var/area/A = get_area(T)
+		data["tile_under"] = list(
+			"turf_type" = "[T.type]",
+			"area_name" = A ? A.name : null,
+			"x" = T.x, "y" = T.y, "z" = T.z,
+		)
+
+		// surroundings: mobs within radius 7
+		var/list/surr = list()
+		for(var/mob/other in oview(7, M))
+			var/turf/OT = get_turf(other)
+			if(!OT)
+				continue
+			surr += list(list(
+				"name" = other.name,
+				"type" = "[other.type]",
+				"distance" = get_dist(T, OT),
+				"alive" = isliving(other) && other.stat != DEAD,
+				"x" = OT.x - T.x,
+				"y" = OT.y - T.y,
+				"z" = OT.z - T.z,
+			))
+		data["surroundings"] = surr
+
+		// nearby_items: notable atoms on tiles within radius 2.
+		var/list/notable = list()
+		var/list/boring_paths = typecacheof(list(
+			/turf/open/floor,
+			/turf/closed/wall,
+			/obj/machinery/door/airlock,
+			/obj/structure/girder,
+			/obj/structure/lattice,
+			/obj/structure/catwalk,
+			/obj/structure/grille,
+			/obj/structure/cable,
+			/obj/effect/decal,
+			/obj/effect/landmark,
+		))
+		for(var/turf/scan in range(2, T))
+			for(var/atom/movable/AM in scan.contents)
+				if(boring_paths[AM.type])
+					continue
+				if(istype(AM, /mob))
+					continue
+				if(istype(AM, /obj/effect/turf_decal))
+					continue
+				notable += list(list(
+					"name" = AM.name,
+					"type" = "[AM.type]",
+					"x" = scan.x - T.x,
+					"y" = scan.y - T.y,
+					"z" = scan.z - T.z,
+				))
+				if(length(notable) >= 64)
+					break
+			if(length(notable) >= 64)
+				break
+		data["nearby_items"] = notable
+	else
+		data["tile_under"] = null
+		data["surroundings"] = list()
+		data["nearby_items"] = list()
+
+	if(lod == "brief")
+		// brief drill-downs skip the bulky context fields
+		data -= "surroundings"
+		data -= "nearby_items"
+
+	return iris_envelope("iris_player", lod, data)
