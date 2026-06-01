@@ -79,8 +79,9 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 	))
 
 /proc/iris_world_snapshot(list/input)
-	var/list/out = list()
-	out["round_id"] = text2num(GLOB.round_id) || 0
+	var/lod = iris_lod(input)
+	var/list/data = list()
+	data["round_id"] = text2num(GLOB.round_id) || 0
 
 	var/state_str = "lobby"
 	if(SSticker)
@@ -93,19 +94,19 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 				state_str = "playing"
 			if(GAME_STATE_FINISHED)
 				state_str = "finished"
-	out["phase"] = state_str
+	data["phase"] = state_str
 
 	var/round_start = SSticker ? SSticker.round_start_time : 0
-	out["round_duration_ds"] = round_start ? (world.time - round_start) : 0
+	data["round_duration_ds"] = round_start ? (world.time - round_start) : 0
 
-	out["players_total"] = length(GLOB.clients)
-	out["players_alive"] = length(GLOB.alive_player_list)
-	out["admins_online"] = length(GLOB.admins)
+	data["players_total"] = length(GLOB.clients)
+	data["players_alive"] = length(GLOB.alive_player_list)
+	data["admins_online"] = length(GLOB.admins)
 
 	var/seclvl = "unknown"
 	if(SSsecurity_level && SSsecurity_level.initialized && SSsecurity_level.current_security_level)
 		seclvl = SSsecurity_level.current_security_level.name
-	out["security_level"] = seclvl
+	data["security_level"] = seclvl
 
 	var/list/shuttle_info = null
 	if(SSshuttle && SSshuttle.emergency)
@@ -113,13 +114,36 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 			"mode" = SSshuttle.emergency.mode,
 			"time_left_ds" = SSshuttle.emergency.timeLeft(1),
 		)
-	out["shuttle"] = shuttle_info
+	data["shuttle"] = shuttle_info
 
-	out["comms_blackout"] = FALSE
+	data["comms_blackout"] = FALSE
 
-	out["lod"] = input["lod"] || "standard"
+	var/list/station_zs = list()
+	if(SSmapping)
+		for(var/z in SSmapping.levels_by_trait(ZTRAIT_STATION))
+			station_zs += z
+	data["station_z_levels"] = station_zs
 
-	return json_encode(out)
+	if(lod != "brief")
+		var/list/sm_out = list()
+		for(var/obj/machinery/power/supermatter_crystal/sm in GLOB.machines)
+			var/turf/ST = get_turf(sm)
+			var/area/SA = get_area(sm)
+			var/datum/gas_mixture/gm = sm.return_air()
+			sm_out += list(list(
+				"name" = sm.name,
+				"x" = ST ? ST.x : null,
+				"y" = ST ? ST.y : null,
+				"z" = ST ? ST.z : null,
+				"area_name" = SA ? SA.name : null,
+				"integrity_percent" = round(sm.get_integrity_percent(), 0.1),
+				"internal_energy" = sm.internal_energy,
+				"temperature_k" = gm ? gm.return_temperature() : null,
+				"delaminating" = (sm.final_countdown || sm.damage >= sm.explosion_point) ? TRUE : FALSE,
+			))
+		data["supermatter"] = sm_out
+
+	return iris_envelope("iris_world", lod, data)
 
 // --- shared payload helpers --------------------------------------------------
 
