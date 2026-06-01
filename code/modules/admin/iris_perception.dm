@@ -129,7 +129,7 @@ GLOBAL_LIST_EMPTY(iris_areas_index_cache)
 
 	if(lod != "brief")
 		var/list/sm_out = list()
-		for(var/obj/machinery/power/supermatter_crystal/sm in GLOB.machines)
+		for(var/obj/machinery/power/supermatter_crystal/sm as anything in SSmachines.get_machines_by_type_and_subtypes(/obj/machinery/power/supermatter_crystal))
 			var/turf/ST = get_turf(sm)
 			var/area/SA = get_area(sm)
 			var/datum/gas_mixture/gm = sm.return_air()
@@ -324,7 +324,6 @@ GLOBAL_LIST_EMPTY(iris_areas_index_cache)
 			/obj/machinery/door/airlock,
 			/obj/structure/girder,
 			/obj/structure/lattice,
-			/obj/structure/catwalk,
 			/obj/structure/grille,
 			/obj/structure/cable,
 			/obj/effect/decal,
@@ -532,7 +531,6 @@ GLOBAL_LIST_EMPTY(iris_areas_index_cache)
 		/obj/machinery/door/airlock,
 		/obj/structure/girder,
 		/obj/structure/lattice,
-		/obj/structure/catwalk,
 		/obj/effect/turf_decal,
 	))
 
