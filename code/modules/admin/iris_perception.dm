@@ -32,6 +32,8 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 		return iris_area_endpoint(input)
 	if("iris_tiles" in input)
 		return iris_tiles_endpoint(input)
+	if("iris_areas_index" in input)
+		return iris_areas_index_endpoint(input)
 
 	return json_encode(list("error" = "unknown_endpoint"))
 
@@ -525,4 +527,70 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 		"center" = list("x" = cx, "y" = cy, "z" = cz),
 		"radius" = radius,
 		"tiles" = tiles,
+	))
+
+// --- areas_index endpoint ----------------------------------------------------
+
+/proc/iris_areas_index_endpoint(list/input)
+	var/lod = iris_lod(input)
+	var/started = world.time
+	var/list/result = list()
+
+	for(var/area/A as anything in GLOB.areas)
+		if(!istype(A))
+			continue
+		// Per-z bounding boxes: key = "[z]" -> list(z, xmin, ymin, xmax, ymax, turf_count)
+		var/list/per_z = list()
+		var/list/edge_turfs = list()
+		for(var/turf/T in A)
+			var/z_key = "[T.z]"
+			var/list/box = per_z[z_key]
+			if(!box)
+				per_z[z_key] = list(T.z, T.x, T.y, T.x, T.y, 1)
+			else
+				if(T.x < box[2]) box[2] = T.x
+				if(T.y < box[3]) box[3] = T.y
+				if(T.x > box[4]) box[4] = T.x
+				if(T.y > box[5]) box[5] = T.y
+				box[6]++
+			// Cheap sample: every third turf becomes a candidate for adjacency.
+			if(!(box && box[6] % 3))
+				edge_turfs += T
+		var/list/boxes_out = list()
+		var/total_turfs = 0
+		for(var/k in per_z)
+			var/list/box = per_z[k]
+			total_turfs += box[6]
+			boxes_out += list(list(
+				"z" = box[1],
+				"x_min" = box[2], "y_min" = box[3],
+				"x_max" = box[4], "y_max" = box[5],
+				"turf_count" = box[6],
+			))
+
+		var/list/adj_set = list()
+		for(var/turf/T as anything in edge_turfs)
+			for(var/dir in list(NORTH, SOUTH, EAST, WEST))
+				var/turf/N = get_step(T, dir)
+				if(!N)
+					continue
+				var/area/NA = N.loc
+				if(!istype(NA) || NA == A || !NA.name)
+					continue
+				adj_set[NA.name] = TRUE
+		var/list/adj_out = list()
+		for(var/n in adj_set)
+			adj_out += n
+
+		result += list(list(
+			"name" = A.name,
+			"type" = "[A.type]",
+			"turf_count" = total_turfs,
+			"bounding_boxes" = boxes_out,
+			"adjacency" = adj_out,
+		))
+
+	return iris_envelope("iris_areas_index", lod, list(
+		"areas" = result,
+		"generated_in_ds" = world.time - started,
 	))
