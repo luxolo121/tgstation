@@ -28,6 +28,8 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 		return iris_players_endpoint(input)
 	if("iris_player" in input)
 		return iris_player_endpoint(input)
+	if("iris_area" in input)
+		return iris_area_endpoint(input)
 
 	return json_encode(list("error" = "unknown_endpoint"))
 
@@ -305,3 +307,144 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 		data -= "nearby_items"
 
 	return iris_envelope("iris_player", lod, data)
+
+// --- area endpoint -----------------------------------------------------------
+
+/// Returns assoc list with atmos summary for an area: avg temperature (K),
+/// pressure (kPa), oxygen %, plasma %. Computed over open turfs in the area.
+/// Returns null if the area has no open turfs.
+/proc/iris_area_atmos(area/A)
+	if(!istype(A))
+		return null
+	var/total = 0
+	var/temp_sum = 0
+	var/pressure_sum = 0
+	var/o2_sum = 0
+	var/plasma_sum = 0
+	for(var/turf/open/T in A)
+		var/datum/gas_mixture/gm = T.return_air()
+		if(!gm)
+			continue
+		total++
+		temp_sum += gm.return_temperature()
+		pressure_sum += gm.return_pressure()
+		var/moles = gm.total_moles()
+		if(moles > 0 && gm.gases)
+			if(gm.gases[GAS_O2])
+				o2_sum += gm.gases[GAS_O2][MOLES] / moles
+			if(gm.gases[GAS_PLASMA])
+				plasma_sum += gm.gases[GAS_PLASMA][MOLES] / moles
+	if(!total)
+		return null
+	return list(
+		"avg_temp_k" = round(temp_sum / total, 0.01),
+		"avg_pressure_kpa" = round(pressure_sum / total, 0.01),
+		"oxygen_frac" = round(o2_sum / total, 0.001),
+		"plasma_frac" = round(plasma_sum / total, 0.001),
+		"sampled_turfs" = total,
+	)
+
+/proc/iris_area_endpoint(list/input)
+	var/lod = iris_lod(input)
+	var/needle_raw = input["name"]
+	if(!needle_raw)
+		return iris_envelope("iris_area", lod, null, list("code" = "bad_request", "detail" = "missing name"))
+	var/needle = lowertext(needle_raw)
+
+	var/list/matches = list()
+	for(var/area/candidate as anything in GLOB.areas)
+		if(!candidate.name)
+			continue
+		if(findtext(lowertext(candidate.name), needle))
+			matches += candidate
+
+	if(!length(matches))
+		return iris_envelope("iris_area", lod, null, list("code" = "not_found", "name" = needle_raw))
+	if(length(matches) > 1)
+		var/list/match_names = list()
+		for(var/area/candidate as anything in matches)
+			match_names += candidate.name
+		return iris_envelope("iris_area", lod, null, list("code" = "ambiguous", "matches" = match_names))
+
+	var/area/A = matches[1]
+	var/list/data = list()
+	data["name"] = A.name
+	data["type"] = "[A.type]"
+
+	var/mob_count = 0
+	var/player_count = 0
+	var/ghost_count = 0
+	var/npc_count = 0
+	var/breach = FALSE
+	for(var/turf/T in A)
+		if(!breach && isspaceturf(T))
+			breach = TRUE
+		for(var/mob/M in T.contents)
+			mob_count++
+			if(isobserver(M))
+				ghost_count++
+			else if(M.client)
+				player_count++
+			else
+				npc_count++
+	data["mob_count"] = mob_count
+	data["has_power"] = A.powered(AREA_USAGE_EQUIP) ? TRUE : FALSE
+	data["breach"] = breach
+	data["fire"] = A.fire ? TRUE : FALSE
+
+	if(lod == "brief")
+		return iris_envelope("iris_area", lod, data)
+
+	data["player_count"] = player_count
+	data["ghost_count"] = ghost_count
+	data["npc_count"] = npc_count
+	data["atmos_summary"] = iris_area_atmos(A)
+	var/list/apc_info = null
+	if(A.apc)
+		apc_info = list(
+			"cell_charge" = A.apc.cell ? A.apc.cell.charge : null,
+			"cell_max" = A.apc.cell ? A.apc.cell.maxcharge : null,
+			"operating" = A.apc.operating ? TRUE : FALSE,
+		)
+	data["apc_status"] = apc_info
+	data["lights_on"] = A.lightswitch ? TRUE : FALSE
+
+	if(lod != "detailed")
+		return iris_envelope("iris_area", lod, data)
+
+	// detailed: per-tile rundown of non-floor/non-wall atoms + adjacency
+	var/list/items = list()
+	var/list/boring_paths = typecacheof(list(
+		/turf/open/floor,
+		/turf/closed/wall,
+		/obj/effect/turf_decal,
+	))
+	var/turf_count = 0
+	var/list/adj_names = list()
+	for(var/turf/T in A)
+		turf_count++
+		for(var/atom/movable/AM in T.contents)
+			if(boring_paths[AM.type])
+				continue
+			items += list(list(
+				"name" = AM.name,
+				"type" = "[AM.type]",
+				"x" = T.x, "y" = T.y, "z" = T.z,
+			))
+		// edge detection: check N/E/S/W neighbours only
+		for(var/dir in list(NORTH, SOUTH, EAST, WEST))
+			var/turf/N = get_step(T, dir)
+			if(!N)
+				continue
+			var/area/NA = N.loc
+			if(!istype(NA) || NA == A)
+				continue
+			adj_names[NA.name] = TRUE
+	data["turf_count"] = turf_count
+	data["items"] = items
+	var/list/dep_list = list()
+	for(var/n in adj_names)
+		dep_list += n
+	data["departures"] = dep_list
+
+	return iris_envelope("iris_area", lod, data)
