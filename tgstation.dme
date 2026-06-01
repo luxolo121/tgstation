@@ -3176,6 +3176,7 @@
 #include "code\modules\admin\fun_balloon.dm"
 #include "code\modules\admin\greyscale_modify_menu.dm"
 #include "code\modules\admin\holder2.dm"
+#include "code\modules\admin\iris_perception.dm"
 #include "code\modules\admin\IsBanned.dm"
 #include "code\modules\admin\known_alts.dm"
 #include "code\modules\admin\outfit_editor.dm"

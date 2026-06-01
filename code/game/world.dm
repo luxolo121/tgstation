@@ -278,6 +278,8 @@ GLOBAL_VAR_INIT(last_maptick_time, 0)
 /world/Topic(T, addr, master, key)
 	TGS_TOPIC //redirect to server tools if necessary
 
+	if(T && (copytext(T, 1, 6) == "iris_" || copytext(T, 1, 7) == "?iris_")) return iris_topic(T, addr, master)
+
 	var/static/list/topic_handlers = TopicHandlers()
 
 	var/list/input = params2list(T)

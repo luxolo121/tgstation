@@ -4,6 +4,7 @@
 /config/dev_overrides.txt
 /config/dev_preferences.json
 /config/dev_preferences.json.updatebac
+/config/iris.txt
 
 #Ignore everything in datafolder and subdirectories
 /data/**/*
