@@ -37,6 +37,29 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 
 	return json_encode(list("error" = "unknown_endpoint"))
 
+/proc/iris_slot_name(slot_id)
+	switch(slot_id)
+		if(ITEM_SLOT_BACK)        return "back"
+		if(ITEM_SLOT_NECK)        return "neck"
+		if(ITEM_SLOT_HEAD)        return "head"
+		if(ITEM_SLOT_MASK)        return "mask"
+		if(ITEM_SLOT_EYES)        return "eyes"
+		if(ITEM_SLOT_EARS)        return "ears"
+		if(ITEM_SLOT_OCLOTHING)   return "suit"
+		if(ITEM_SLOT_ICLOTHING)   return "uniform"
+		if(ITEM_SLOT_GLOVES)      return "gloves"
+		if(ITEM_SLOT_FEET)        return "shoes"
+		if(ITEM_SLOT_ID)          return "id"
+		if(ITEM_SLOT_BELT)        return "belt"
+		if(ITEM_SLOT_LPOCKET)     return "pocket_left"
+		if(ITEM_SLOT_RPOCKET)     return "pocket_right"
+		if(ITEM_SLOT_SUITSTORE)   return "suit_storage"
+		if(ITEM_SLOT_HANDS)       return "hands"
+		if(ITEM_SLOT_HANDCUFFED)  return "handcuffed"
+		if(ITEM_SLOT_LEGCUFFED)   return "legcuffed"
+		if(ITEM_SLOT_DEX_STORAGE) return "dex_storage"
+	return "slot_[slot_id]"
+
 // --- envelope + lod helpers --------------------------------------------------
 
 /proc/iris_lod(list/input)
@@ -173,7 +196,7 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 	// --- detailed -----------------------------------------------------------
 	var/list/equipped = list()
 	for(var/obj/item/worn in M.get_equipped_items(INCLUDE_HELD|INCLUDE_POCKETS|INCLUDE_ABSTRACT))
-		var/slot_id = "[M.get_slot_by_item(worn)]"
+		var/slot_id = iris_slot_name(M.get_slot_by_item(worn))
 		equipped[slot_id] = list("name" = worn.name, "type" = "[worn.type]")
 	out["equipped"] = equipped
 
