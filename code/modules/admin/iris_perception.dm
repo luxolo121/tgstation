@@ -1,6 +1,5 @@
 // Iris perception: token-gated read-only Topic endpoints for the admin-challenge agent.
 // Token loaded from config/iris.txt (single line, no trailing whitespace).
-// TODO: future endpoints — ?iris_players, ?iris_area
 // Entry point is iris_topic(query, addr, master), called from /world/Topic in code/game/world.dm.
 
 GLOBAL_VAR_INIT(iris_token_cache_loaded, FALSE)
@@ -23,11 +22,30 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 	if(!expected || input["token"] != expected)
 		return iris_unauthorized()
 
-	// Dispatch — only ?iris_world for now.
 	if("iris_world" in input)
 		return iris_world_snapshot(input)
+	if("iris_players" in input)
+		return iris_players_endpoint(input)
 
 	return json_encode(list("error" = "unknown_endpoint"))
+
+// --- envelope + lod helpers --------------------------------------------------
+
+/proc/iris_lod(list/input)
+	var/raw = input?["lod"]
+	switch(raw)
+		if("brief", "standard", "detailed")
+			return raw
+	return "standard"
+
+/proc/iris_envelope(endpoint, lod, data, error = null)
+	return json_encode(list(
+		"endpoint" = endpoint,
+		"lod" = lod,
+		"generated_at_ds" = world.time,
+		"data" = data,
+		"error" = error,
+	))
 
 /proc/iris_world_snapshot(list/input)
 	var/list/out = list()
@@ -71,3 +89,131 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 	out["lod"] = input["lod"] || "standard"
 
 	return json_encode(out)
+
+// --- shared payload helpers --------------------------------------------------
+
+/// Build a description of one mob slot useful for ?iris_players / ?iris_player.
+/// `lod` ∈ "brief" | "standard" | "detailed".
+/proc/iris_mob_payload(client/C, lod)
+	var/list/out = list()
+	out["ckey"] = C ? C.ckey : null
+	out["name"] = C ? C.key : null
+	var/mob/M = C?.mob
+	if(!M)
+		out["alive"] = FALSE
+		out["area_name"] = null
+		return out
+
+	out["name"] = M.name || C.key
+	var/area/A = get_area(M)
+	out["area_name"] = A ? A.name : null
+	var/turf/T = get_turf(M)
+	out["x"] = T ? T.x : null
+	out["y"] = T ? T.y : null
+	out["z"] = T ? T.z : null
+	out["alive"] = isliving(M) && M.stat != DEAD
+
+	var/role = "unknown"
+	if(M.mind?.assigned_role?.title)
+		role = M.mind.assigned_role.title
+	else if(isobserver(M))
+		role = "ghost"
+	out["role"] = role
+
+	if(lod == "brief")
+		return out
+
+	out["mob_type"] = "[M.type]"
+	out["intent"] = null
+	out["stat"] = "unknown"
+	if(isliving(M))
+		var/mob/living/L = M
+		out["health"] = L.health
+		out["max_health"] = L.maxHealth
+		switch(L.stat)
+			if(CONSCIOUS) out["stat"] = "conscious"
+			if(SOFT_CRIT) out["stat"] = "soft_crit"
+			if(UNCONSCIOUS) out["stat"] = "unconscious"
+			if(HARD_CRIT) out["stat"] = "hard_crit"
+			if(DEAD) out["stat"] = "dead"
+		out["intent"] = L.combat_mode ? "harm" : "help"
+		out["mob_size"] = L.mob_size
+		out["on_fire"] = L.on_fire ? TRUE : FALSE
+		out["in_crit"] = (L.stat == SOFT_CRIT || L.stat == HARD_CRIT)
+	else
+		out["health"] = null
+		out["max_health"] = null
+		out["mob_size"] = null
+		out["on_fire"] = FALSE
+		out["in_crit"] = FALSE
+
+	var/obj/item/l_hand = M.get_item_for_held_index(1)
+	var/obj/item/r_hand = M.get_item_for_held_index(2)
+	out["held_left"] = l_hand ? l_hand.name : null
+	out["held_right"] = r_hand ? r_hand.name : null
+
+	// nearby_mob_count: living mobs around the mob, excluding self, radius 7.
+	var/nearby = 0
+	if(T)
+		for(var/mob/living/other in oview(7, M))
+			nearby++
+	out["nearby_mob_count"] = nearby
+
+	if(lod != "detailed")
+		return out
+
+	// --- detailed -----------------------------------------------------------
+	var/list/equipped = list()
+	for(var/obj/item/worn in M.get_equipped_items(INCLUDE_HELD|INCLUDE_POCKETS|INCLUDE_ABSTRACT))
+		var/slot_id = "[M.get_slot_by_item(worn)]"
+		equipped[slot_id] = list("name" = worn.name, "type" = "[worn.type]")
+	out["equipped"] = equipped
+
+	if(iscarbon(M))
+		var/mob/living/carbon/cmob = M
+		out["bleeding"] = cmob.is_bleeding() ? TRUE : FALSE
+	else
+		out["bleeding"] = FALSE
+	if(isliving(M))
+		var/mob/living/L = M
+		out["blood_volume"] = L.blood_volume
+		out["body_temperature"] = L.bodytemperature
+		out["oxyloss"] = L.oxyloss
+		out["toxloss"] = L.toxloss
+		out["fireloss"] = L.fireloss
+		out["bruteloss"] = L.bruteloss
+	else
+		out["blood_volume"] = null
+		out["body_temperature"] = null
+		out["oxyloss"] = null
+		out["toxloss"] = null
+		out["fireloss"] = null
+		out["bruteloss"] = null
+
+	var/list/antags = list()
+	if(M.mind?.antag_datums)
+		for(var/datum/antagonist/ag in M.mind.antag_datums)
+			antags += ag.name
+	out["antag_datums"] = antags
+
+	// Radio frequency, if any.
+	var/freq = null
+	for(var/obj/item/radio/R in M.contents)
+		freq = R.get_frequency()
+		break
+	if(isnull(freq))
+		for(var/obj/item/radio/R in M.get_equipped_items(INCLUDE_HELD))
+			freq = R.get_frequency()
+			break
+	out["comms_freq"] = freq
+
+	return out
+
+/proc/iris_players_endpoint(list/input)
+	var/lod = iris_lod(input)
+	var/list/data = list()
+	for(var/client/C in GLOB.clients)
+		if(!C)
+			continue
+		data += list(iris_mob_payload(C, lod))
+	return iris_envelope("iris_players", lod, data)
