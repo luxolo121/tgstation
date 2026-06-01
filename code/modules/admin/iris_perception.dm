@@ -30,6 +30,8 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 		return iris_player_endpoint(input)
 	if("iris_area" in input)
 		return iris_area_endpoint(input)
+	if("iris_tiles" in input)
+		return iris_tiles_endpoint(input)
 
 	return json_encode(list("error" = "unknown_endpoint"))
 
@@ -448,3 +450,79 @@ GLOBAL_VAR_INIT(iris_token_cache, "")
 	data["departures"] = dep_list
 
 	return iris_envelope("iris_area", lod, data)
+
+// --- tiles endpoint ----------------------------------------------------------
+
+/proc/iris_tiles_endpoint(list/input)
+	var/lod = iris_lod(input)
+	var/center_raw = input["center"]
+	var/radius_raw = input["radius"]
+	if(!center_raw)
+		return iris_envelope("iris_tiles", lod, null, list("code" = "bad_request", "detail" = "missing center"))
+	var/list/parts = splittext(center_raw, ",")
+	if(length(parts) < 3)
+		return iris_envelope("iris_tiles", lod, null, list("code" = "bad_request", "detail" = "center must be x,y,z"))
+	var/cx = text2num(parts[1])
+	var/cy = text2num(parts[2])
+	var/cz = text2num(parts[3])
+	if(isnull(cx) || isnull(cy) || isnull(cz))
+		return iris_envelope("iris_tiles", lod, null, list("code" = "bad_request", "detail" = "non-numeric center"))
+	var/radius = text2num(radius_raw)
+	if(isnull(radius))
+		radius = 3
+	radius = round(radius)
+	if(radius < 0)
+		radius = 0
+	if(radius > 15)
+		return iris_envelope("iris_tiles", lod, null, list("code" = "bad_request", "detail" = "radius > 15"))
+
+	var/list/boring_paths = typecacheof(list(
+		/obj/machinery/door/airlock,
+		/obj/structure/girder,
+		/obj/structure/lattice,
+		/obj/structure/catwalk,
+		/obj/effect/turf_decal,
+	))
+
+	var/list/tiles = list()
+	for(var/dx in -radius to radius)
+		for(var/dy in -radius to radius)
+			var/turf/T = locate(cx + dx, cy + dy, cz)
+			if(!T)
+				continue
+			var/list/tile = list()
+			tile["x"] = T.x
+			tile["y"] = T.y
+			tile["z"] = T.z
+			tile["turf_type"] = "[T.type]"
+			var/area/A = get_area(T)
+			tile["area_name"] = A ? A.name : null
+			var/mc = 0
+			var/fire = FALSE
+			for(var/atom/movable/AM in T.contents)
+				if(ismob(AM))
+					mc++
+				if(istype(AM, /obj/effect/hotspot))
+					fire = TRUE
+			tile["mob_count"] = mc
+			tile["has_fire"] = fire
+			tile["light_level"] = T.get_lumcount()
+			if(lod != "brief")
+				var/list/notable = list()
+				for(var/atom/movable/AM in T.contents)
+					if(boring_paths[AM.type])
+						continue
+					notable += "[AM.type]"
+				tile["notable_items"] = notable
+			if(lod == "detailed")
+				var/list/full = list("[T.type]")
+				for(var/atom/movable/AM in T.contents)
+					full += "[AM.type]"
+				tile["content_types"] = full
+			tiles += list(tile)
+
+	return iris_envelope("iris_tiles", lod, list(
+		"center" = list("x" = cx, "y" = cy, "z" = cz),
+		"radius" = radius,
+		"tiles" = tiles,
+	))
