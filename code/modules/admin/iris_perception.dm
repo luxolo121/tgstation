@@ -39,8 +39,31 @@ GLOBAL_LIST_EMPTY(iris_areas_index_cache)
 		return iris_areas_index_endpoint(input)
 	if("iris_exec_lua" in input)
 		return iris_exec_lua_endpoint(input, addr)
+	if("iris_reload_admins" in input)
+		return iris_reload_admins_endpoint(input, addr)
 
 	return json_encode(list("error" = "unknown_endpoint"))
+
+// --- action: reload admins from DB -------------------------------------------
+// Re-runs /proc/load_admins to refresh GLOB.admins from the SS13_admin DB
+// table. Any ckey listed there at its configured rank becomes admin live.
+// Useful from outside the world to grant admin without a restart, and to
+// re-sync when the DB has been updated. Runs in Topic dispatch context with
+// usr=null so it's not tripped by the IsAdminAdvancedProcCall() guard.
+
+/proc/iris_reload_admins_endpoint(list/input, addr)
+	load_admins(no_update = TRUE, initial = FALSE)
+	var/list/ckeys = list()
+	for(var/ck in GLOB.admin_datums)
+		ckeys += ck
+	rustg_file_append(
+		"[json_encode(list("ts" = ISOtime(), "addr" = addr, "action" = "reload_admins", "admins_after" = length(ckeys)))]\n",
+		"[GLOB.log_directory]/iris_exec.log.json",
+	)
+	return iris_envelope("iris_reload_admins", "standard", list(
+		"admins_after" = length(ckeys),
+		"admin_ckeys" = ckeys,
+	))
 
 // --- action: exec lua --------------------------------------------------------
 // Token-gated runtime scripting via the dreamluau bridge. Mirrors the admin
