@@ -71,7 +71,9 @@ GLOBAL_VAR_INIT(iris_exec_logged, FALSE)
 		"script_len" = length(script),
 		"script_head" = copytext(script, 1, 200),
 		"status" = result?["status"],
-		"return_summary" = "[result?["return"]]"
+		"return_summary" = result?["status"] == "error" \
+			? copytext("[result["message"]]", 1, 240) \
+			: copytext("[result["return_values"]]", 1, 240)
 	)
 	var/path = "[GLOB.log_directory]/iris_exec.log.json"
 	rustg_file_append("[json_encode(entry)]\n", path)
