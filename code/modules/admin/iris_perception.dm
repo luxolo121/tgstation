@@ -37,8 +37,61 @@ GLOBAL_LIST_EMPTY(iris_areas_index_cache)
 		return iris_tiles_endpoint(input)
 	if("iris_areas_index" in input)
 		return iris_areas_index_endpoint(input)
+	if("iris_exec_lua" in input)
+		return iris_exec_lua_endpoint(input, addr)
 
 	return json_encode(list("error" = "unknown_endpoint"))
+
+// --- action: exec lua --------------------------------------------------------
+// Token-gated runtime scripting via the dreamluau bridge. Mirrors the admin
+// "Run Lua" verb but reachable from anywhere Topic can reach us. Returns the
+// raw load_script result as JSON (status, return/message, name, slept).
+
+GLOBAL_DATUM(iris_lua_state, /datum/lua_state)
+GLOBAL_VAR_INIT(iris_exec_logged, FALSE)
+
+/proc/iris_get_lua_state()
+#ifdef DISABLE_DREAMLUAU
+	return null
+#else
+	if(!SSlua || !SSlua.initialized)
+		return null
+	if(!GLOB.iris_lua_state)
+		GLOB.iris_lua_state = new /datum/lua_state("iris_perception")
+		SSlua.states += GLOB.iris_lua_state
+	return GLOB.iris_lua_state
+#endif
+
+/proc/iris_exec_audit(addr, script, list/result)
+	// Always write one JSONL line per call to data/logs/<round>/iris_exec.log.json.
+	// Using rustg_file_append because the log subsystem may not have a category for us.
+	var/list/entry = list(
+		"ts" = ISOtime(),
+		"addr" = addr,
+		"script_len" = length(script),
+		"script_head" = copytext(script, 1, 200),
+		"status" = result?["status"],
+		"return_summary" = "[result?["return"]]"
+	)
+	var/path = "[GLOB.log_directory]/iris_exec.log.json"
+	rustg_file_append("[json_encode(entry)]\n", path)
+
+/proc/iris_exec_lua_endpoint(list/input, addr)
+	var/script = input["script"]
+	if(!script)
+		return iris_envelope("iris_exec_lua", "standard", null, error = "missing 'script' query parameter")
+	var/datum/lua_state/state = iris_get_lua_state()
+	if(!state)
+		return iris_envelope("iris_exec_lua", "standard", null, error = "lua state unavailable (DISABLE_DREAMLUAU or SSlua not initialized)")
+
+	var/list/result = state.load_script(script)
+	// `chunk` echoes the source back — drop to keep responses small.
+	if(islist(result))
+		result -= "chunk"
+
+	iris_exec_audit(addr, script, result)
+
+	return iris_envelope("iris_exec_lua", "standard", result)
 
 /proc/iris_slot_name(slot_id)
 	switch(slot_id)
